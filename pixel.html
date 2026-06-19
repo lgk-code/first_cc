@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>像素画板</title>
+<style>
+  /* ---- 干净现代的浅色界面 ---- */
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --line: #e6e8eb;
+    --text: #1f2329;
+    --muted: #8a909a;
+    --accent: #3b82f6;
+    --shadow: 0 6px 24px rgba(17, 24, 39, 0.08);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 32px 16px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+  .app {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  /* ---- 画布 ---- */
+  .canvas-wrap {
+    background: var(--card);
+    padding: 16px;
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+  }
+  #board {
+    display: block;
+    border-radius: 6px;
+    cursor: crosshair;
+    touch-action: none;            /* 触屏拖动时不滚动页面 */
+  }
+
+  /* ---- 工具面板 ---- */
+  .tools {
+    width: 240px;
+    background: var(--card);
+    padding: 18px;
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .group-title {
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+
+  .palette {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8px;
+  }
+  .swatch {
+    aspect-ratio: 1;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06);
+    transition: transform .08s ease;
+  }
+  .swatch:hover { transform: scale(1.08); }
+  .swatch.active { border-color: var(--accent); }
+
+  .row { display: flex; align-items: center; gap: 10px; }
+  .current {
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.1);
+  }
+  input[type="color"] {
+    width: 38px; height: 32px;
+    border: none; background: none; padding: 0;
+    cursor: pointer;
+  }
+
+  .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  button {
+    font: inherit;
+    font-size: 14px;
+    padding: 9px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--text);
+    cursor: pointer;
+    transition: background .12s ease, border-color .12s ease;
+  }
+  button:hover { background: #f0f2f5; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button:disabled:hover { background: #fff; }
+  button.active { border-color: var(--accent); color: var(--accent); background: #eff5ff; }
+  button.primary { grid-column: 1 / -1; background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { background: #2f6fe0; }
+</style>
+</head>
+<body>
+  <h1>像素画板</h1>
+  <div class="app">
+    <div class="canvas-wrap">
+      <canvas id="board"></canvas>
+    </div>
+
+    <div class="tools">
+      <div>
+        <div class="group-title">网格大小</div>
+        <div class="btns">
+          <button class="size-btn" data-size="16">16 × 16</button>
+          <button class="size-btn" data-size="32">32 × 32</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="group-title">调色板</div>
+        <div class="palette" id="palette"></div>
+      </div>
+
+      <div>
+        <div class="group-title">当前颜色</div>
+        <div class="row">
+          <span class="current" id="current"></span>
+          <input type="color" id="picker" value="#1f2329" title="自定义颜色">
+          <span style="font-size:13px;color:var(--muted)">自定义</span>
+        </div>
+      </div>
+
+      <div>
+        <div class="group-title">编辑</div>
+        <div class="btns">
+          <button id="undoBtn">↩️ 撤销</button>
+          <button id="redoBtn">↪️ 重做</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="group-title">工具</div>
+        <div class="btns">
+          <button id="penBtn" class="active">✏️ 画笔</button>
+          <button id="eraserBtn">🧽 橡皮</button>
+          <button id="clearBtn">🗑️ 清空</button>
+          <button id="resetBtn">🔄 重置</button>
+          <button id="exportBtn" class="primary">⬇️ 导出 PNG</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // ===== 配置 =====
+  const BOARD = 416;            // 画布显示边长（像素）；CELL 由它和网格数推导
+  const SIZES = [16, 32];       // 可切换的网格大小
+  const GRID_COLOR = '#e6e8eb'; // 网格线颜色
+  const EMPTY = null;           // 空格子（白底/导出时透明）
+  const LS_PREFIX = 'pixelart-';// localStorage 键前缀
+
+  let COLS = 16, ROWS = 16;     // 当前网格（可切换）
+  let CELL = BOARD / COLS;      // 每格显示像素
+
+  // 预设调色板
+  const PALETTE = [
+    '#1f2329', '#6b7280', '#d1d5db', '#ffffff', '#ef4444', '#f97316',
+    '#f59e0b', '#eab308', '#22c55e', '#10b981', '#06b6d4', '#3b82f6',
+    '#6366f1', '#8b5cf6', '#ec4899', '#a16207'
+  ];
+
+  // ===== 默认画作（用作初始画面 & "重置"目标）=====
+  // 用字符画法描述：每个字符 → ART_LEGEND 里的颜色，空格 = 空格子。
+  const ART_LEGEND = {
+    'K': '#1f2329', 'W': '#ffffff', 'R': '#ef4444', 'p': '#ec4899',
+    'Y': '#f6c453', 'B': '#3b82f6', 'o': '#b45309'   // 热气球：红/黄/蓝条纹 + 棕藤篮
+  };
+
+  // 16×16：红蘑菇
+  const ART_16 = [
+    "                ",
+    "      KKKK      ",
+    "    KKRRRRKK    ",
+    "   KRRRRRRRRK   ",
+    "  KRRWWRRRWWRK  ",
+    "  KRRWWRRRWWRK  ",
+    " KRRRRRRRRRRRRK ",
+    " KRRRRWWRRRRRRK ",
+    " KKRRRRRRRRRRKK ",
+    "    KWWWWWWK    ",
+    "    KWKWWKWK    ",
+    "    KWKWWKWK    ",
+    "    KWWWWWWK    ",
+    "    KKKKKKKK    ",
+    "                ",
+    "                "
+  ];
+
+  // 32×32：热气球（红/黄/蓝竖条纹球体 + 吊绳 + 藤篮）
+  const ART_32 = [
+    "                                ",
+    "             YBBBBY             ",
+    "           YYYBBBBYYY           ",
+    "          YYYYBBBBYYYY          ",
+    "         RYYYYBBBBYYYYR         ",
+    "        RRYYYYBBBBYYYYRR        ",
+    "       RRRYYYYBBBBYYYYRRR       ",
+    "       RRRYYYYBBBBYYYYRRR       ",
+    "      RRRRYYYYBBBBYYYYRRRR      ",
+    "      RRRRYYYYBBBBYYYYRRRR      ",
+    "      RRRRYYYYBBBBYYYYRRRR      ",
+    "      RRRRYYYYBBBBYYYYRRRR      ",
+    "      RRRRYYYYBBBBYYYYRRRR      ",
+    "       RRRYYYYBBBBYYYYRRR       ",
+    "       RRRYYYYBBBBYYYYRRR       ",
+    "        RRYYYYBBBBYYYYRR        ",
+    "         RYYYYBBBBYYYYR         ",
+    "          YYYYBBBBYYYY          ",
+    "            YYBBBBYY            ",
+    "              BBBB              ",
+    "             K KK K             ",
+    "             K KK K             ",
+    "             K KK K             ",
+    "             K KK K             ",
+    "             oooooo             ",
+    "             oooooo             ",
+    "             oooooo             ",
+    "              oooo              ",
+    "                                ",
+    "                                ",
+    "                                ",
+    "                                "
+  ];
+
+  const DEFAULTS = { 16: ART_16, 32: ART_32 };
+
+  // 把字符画转成 grid（按目标尺寸裁剪/补齐，容忍长度不齐）
+  function artToGrid(rows, n) {
+    const g = [];
+    for (let r = 0; r < n; r++) {
+      const line = rows[r] || '';
+      const row = [];
+      for (let c = 0; c < n; c++) row.push(ART_LEGEND[line[c]] || EMPTY);
+      g.push(row);
+    }
+    return g;
+  }
+  function defaultGrid(n) { return artToGrid(DEFAULTS[n] || [], n); }
+
+  // ===== 状态 =====
+  let grid = [];
+  let currentColor = '#1f2329';
+  let tool = 'pen';            // 'pen' | 'eraser'
+  let painting = false;
+
+  // ===== canvas 初始化（按 DPR 放大保证清晰）=====
+  const canvas = document.getElementById('board');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  let size = BOARD;             // 画布逻辑边长（= COLS * CELL）
+
+  function setupCanvas() {
+    size = COLS * CELL;
+    canvas.width = size * dpr;
+    canvas.height = size * dpr;
+    canvas.style.width = size + 'px';
+    canvas.style.height = size + 'px';
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // 重置变换，避免切换尺寸时缩放累积
+    ctx.scale(dpr, dpr);
+  }
+
+  // ===== 绘制 =====
+  function draw() {
+    // 底色
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, size, size);
+    // 已涂的格子
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (grid[r][c]) {
+          ctx.fillStyle = grid[r][c];
+          ctx.fillRect(c * CELL, r * CELL, CELL, CELL);
+        }
+      }
+    }
+    // 网格线
+    ctx.strokeStyle = GRID_COLOR;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i <= COLS; i++) {
+      const p = i * CELL + 0.5;          // +0.5 让线条更锐利
+      ctx.moveTo(p, 0); ctx.lineTo(p, size);
+      ctx.moveTo(0, p); ctx.lineTo(size, p);
+    }
+    ctx.stroke();
+  }
+
+  // 把鼠标/触摸坐标换算成格子，并涂色
+  function paintAt(e) {
+    const rect = canvas.getBoundingClientRect();
+    const c = Math.floor((e.clientX - rect.left) / CELL);
+    const r = Math.floor((e.clientY - rect.top) / CELL);
+    if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return;
+    const next = (tool === 'eraser') ? EMPTY : currentColor;
+    if (grid[r][c] === next) return;     // 没变化就不重绘
+    grid[r][c] = next;
+    draw();
+  }
+
+  // ===== 鼠标 / 触摸事件（pointer 统一处理）=====
+  canvas.addEventListener('pointerdown', (e) => {
+    painting = true;
+    canvas.setPointerCapture(e.pointerId);
+    paintAt(e);
+  });
+  canvas.addEventListener('pointermove', (e) => { if (painting) paintAt(e); });
+  canvas.addEventListener('pointerup', () => { if (painting) { painting = false; commit(); } });
+  canvas.addEventListener('pointercancel', () => { if (painting) { painting = false; commit(); } });
+
+  // ===== 调色板 UI =====
+  const paletteEl = document.getElementById('palette');
+  const currentEl = document.getElementById('current');
+  const picker = document.getElementById('picker');
+
+  function setColor(color, fromSwatch) {
+    currentColor = color;
+    currentEl.style.background = color;
+    tool = 'pen';
+    syncToolButtons();
+    // 高亮选中的色块
+    document.querySelectorAll('.swatch').forEach(s => {
+      s.classList.toggle('active', fromSwatch && s.dataset.color === color);
+    });
+  }
+
+  PALETTE.forEach(color => {
+    const s = document.createElement('div');
+    s.className = 'swatch';
+    s.style.background = color;
+    s.dataset.color = color;
+    s.addEventListener('click', () => setColor(color, true));
+    paletteEl.appendChild(s);
+  });
+
+  picker.addEventListener('input', (e) => setColor(e.target.value, false));
+
+  // ===== 工具按钮 =====
+  const penBtn = document.getElementById('penBtn');
+  const eraserBtn = document.getElementById('eraserBtn');
+
+  function syncToolButtons() {
+    penBtn.classList.toggle('active', tool === 'pen');
+    eraserBtn.classList.toggle('active', tool === 'eraser');
+  }
+  penBtn.addEventListener('click', () => { tool = 'pen'; syncToolButtons(); });
+  eraserBtn.addEventListener('click', () => { tool = 'eraser'; syncToolButtons(); });
+
+  document.getElementById('clearBtn').addEventListener('click', () => {
+    for (let r = 0; r < ROWS; r++) grid[r].fill(EMPTY);
+    draw();
+    commit();
+  });
+
+  // 重置：恢复成当前尺寸的默认画作
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    grid = defaultGrid(COLS);
+    draw();
+    commit();
+  });
+
+  // ===== 导出 PNG（空格子保持透明，适合像素图标）=====
+  document.getElementById('exportBtn').addEventListener('click', () => {
+    const scale = 16;                    // 每格导出 16px → 256×256
+    const out = document.createElement('canvas');
+    out.width = COLS * scale;
+    out.height = ROWS * scale;
+    const octx = out.getContext('2d');
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (grid[r][c]) {
+          octx.fillStyle = grid[r][c];
+          octx.fillRect(c * scale, r * scale, scale, scale);
+        }
+      }
+    }
+    const link = document.createElement('a');
+    link.download = 'pixel-art.png';
+    link.href = out.toDataURL('image/png');
+    link.click();
+  });
+
+  // ===== 自动保存 + 网格大小切换 =====
+  // 每种尺寸各存各的：键名形如 "pixelart-16" / "pixelart-32"。
+  function saveState() {
+    try { localStorage.setItem(LS_PREFIX + COLS, JSON.stringify(grid)); } catch (e) {}
+  }
+
+  function loadGrid(n) {
+    try {
+      const raw = localStorage.getItem(LS_PREFIX + n);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        // 校验维度，避免旧数据/损坏数据带坏画布
+        if (Array.isArray(saved) && saved.length === n &&
+            saved.every(row => Array.isArray(row) && row.length === n)) {
+          return saved;
+        }
+      }
+    } catch (e) {}
+    return defaultGrid(n);       // 没有存档时显示我画的默认图
+  }
+
+  function setSize(n) {
+    COLS = ROWS = n;
+    CELL = BOARD / n;
+    grid = loadGrid(n);          // 切到该尺寸时恢复它自己的作品
+    setupCanvas();
+    draw();
+    resetHistory();              // 每种尺寸的撤销历史独立，从当前画面重新开始
+    try { localStorage.setItem(LS_PREFIX + 'size', n); } catch (e) {}
+    document.querySelectorAll('.size-btn').forEach(b =>
+      b.classList.toggle('active', +b.dataset.size === n));
+  }
+
+  document.querySelectorAll('.size-btn').forEach(b =>
+    b.addEventListener('click', () => setSize(+b.dataset.size)));
+
+  // ===== 撤销 / 重做 =====
+  // history 是一串画面快照，histIndex 指向"当前所处的那一步"。
+  // 撤销 = 指针后退一格并恢复那张快照；重做 = 指针前进一格。
+  const MAX_HISTORY = 100;
+  let history = [];
+  let histIndex = -1;
+  const undoBtn = document.getElementById('undoBtn');
+  const redoBtn = document.getElementById('redoBtn');
+
+  function snapshot(g) { return g.map(row => row.slice()); }  // 深拷贝一张网格
+
+  function updateHistoryButtons() {
+    undoBtn.disabled = histIndex <= 0;
+    redoBtn.disabled = histIndex >= history.length - 1;
+  }
+
+  function resetHistory() {
+    history = [snapshot(grid)];
+    histIndex = 0;
+    updateHistoryButtons();
+  }
+
+  // 完成一次操作（画完一笔 / 清空）后调用：存档 + 记一步历史
+  function commit() {
+    history = history.slice(0, histIndex + 1);   // 撤销后又有新动作 → 砍掉重做分支
+    history.push(snapshot(grid));
+    histIndex++;
+    if (history.length > MAX_HISTORY) { history.shift(); histIndex--; }
+    saveState();
+    updateHistoryButtons();
+  }
+
+  function undo() {
+    if (histIndex <= 0) return;
+    histIndex--;
+    grid = snapshot(history[histIndex]);
+    draw();
+    saveState();
+    updateHistoryButtons();
+  }
+
+  function redo() {
+    if (histIndex >= history.length - 1) return;
+    histIndex++;
+    grid = snapshot(history[histIndex]);
+    draw();
+    saveState();
+    updateHistoryButtons();
+  }
+
+  undoBtn.addEventListener('click', undo);
+  redoBtn.addEventListener('click', redo);
+
+  // 快捷键：Ctrl+Z 撤销，Ctrl+Y 或 Ctrl+Shift+Z 重做
+  window.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const k = e.key.toLowerCase();
+    if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+    else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
+  });
+
+  // ===== 启动 =====
+  setColor(currentColor, true);
+  const startSize = +localStorage.getItem(LS_PREFIX + 'size');
+  setSize(SIZES.includes(startSize) ? startSize : 16);
+</script>
+</body>
+</html>
